@@ -1,0 +1,17 @@
+apiVersion: v2
+name: vue-go
+description: >-
+  Preventivatore auto a microservizi: catalogo garanzie e motore di calcolo
+  in Go, frontend in Vue 3, esposti da Gateway API.
+type: application
+
+# version    = versione del chart (cambia quando cambiano i template)
+# appVersion = versione dell'applicazione distribuita (i tag delle immagini)
+version: 0.1.0
+appVersion: "0.1.0"
+
+keywords:
+  - go
+  - vue
+  - kubernetes
+  - gateway-api

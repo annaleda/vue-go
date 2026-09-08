@@ -1,0 +1,49 @@
+{{- if .Values.gateway.enabled }}
+{{/*
+  Gateway API è il successore di Ingress, e la differenza principale è che
+  separa le responsabilità in risorse distinte:
+
+    GatewayClass  chi implementa il gateway (Envoy, NGINX, Istio...)
+                  -> di solito lo installa la piattaforma, una volta sola
+    Gateway       il punto di ingresso: porte, protocolli, certificati
+                  -> lo gestisce chi amministra il cluster
+    HTTPRoute     le regole di instradamento verso i servizi
+                  -> lo gestisce chi sviluppa l'applicazione
+
+  Con Ingress tutto stava in un'unica risorsa piena di annotazioni proprietarie
+  diverse per ogni controller. Qui il modello è standard e i ruoli sono netti.
+
+  Nota: in un cluster vero GatewayClass e Gateway di solito NON stanno nel
+  chart applicativo. Sono qui per rendere l'esercizio autonomo.
+*/}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: {{ .Values.gateway.className }}
+spec:
+  controllerName: {{ .Values.gateway.controllerName }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gateway.name }}
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/part-of: vue-go
+    app.kubernetes.io/managed-by: Helm
+spec:
+  gatewayClassName: {{ .Values.gateway.className }}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: {{ .Values.gateway.port }}
+      {{- if .Values.gateway.hostname }}
+      hostname: {{ .Values.gateway.hostname | quote }}
+      {{- end }}
+      allowedRoutes:
+        # Solo le HTTPRoute di questo namespace possono agganciarsi a questo
+        # Gateway. È il default sensato: senza, qualunque namespace potrebbe
+        # dirottare traffico su di sé.
+        namespaces:
+          from: Same
+{{- end }}

@@ -1,0 +1,85 @@
+# Ambiente locale senza Kubernetes.
+#
+# Serve a due cose:
+#   - avere tutto in piedi con un comando mentre si sviluppa
+#   - capire cosa fa Kubernetes, vedendo prima la versione semplice
+#
+# La corrispondenza fra i due mondi è quasi uno a uno:
+#
+#   docker-compose            Kubernetes
+#   ----------------------    -----------------------------------------
+#   service                   Deployment + Service
+#   nome del servizio         nome DNS del Service
+#   environment               ConfigMap / Secret
+#   ports                     Gateway (o port-forward)
+#   healthcheck               liveness / readiness probe
+#   depends_on                nessun equivalente: in Kubernetes l'ordine di
+#                             avvio non è garantito, i servizi devono
+#                             sopportare che le dipendenze non ci siano ancora
+#
+# Quell'ultima riga è la differenza concettuale più importante: qui possiamo
+# dire "parti dopo il catalogo", in Kubernetes no. Per questo quote-service
+# non fallisce all'avvio se il catalogo non risponde: si limita a dichiararsi
+# non pronto finché non lo raggiunge.
+
+services:
+  catalog-service:
+    build:
+      context: ./services/catalog-service
+    image: vue-go/catalog-service:0.1.0
+    environment:
+      - PORT=8080
+    ports:
+      # La sintassi con i due punti e il trattino prende il valore
+      # dall'ambiente (o da un file .env) e altrimenti usa il default.
+      # Serve perche' le porte dell'host sono una risorsa condivisa: se la
+      # 8081 e' gia' occupata da qualcos'altro basta esportare CATALOG_PORT,
+      # senza modificare questo file. La porta nel container resta 8080.
+      #
+      # Nota: compose sostituisce le variabili in TUTTO il file, commenti
+      # compresi. Scrivere qui un esempio con il dollaro e le graffe fa
+      # comparire un warning "variable is not set" a ogni avvio.
+      - "${CATALOG_PORT:-8081}:8080"
+    # Nessun healthcheck qui, ed è una scelta consapevole.
+    #
+    # L'immagine distroless non ha shell né curl, quindi il classico
+    # `test: ["CMD", "curl", "-f", "http://localhost:8080/health/liveness"]`
+    # non può funzionare: dentro il container non esiste curl.
+    #
+    # Le alternative sono tre: usare un'immagine base più grassa (alpine),
+    # aggiungere al binario un flag tipo `--healthcheck` che chiama se stesso,
+    # oppure rinunciare all'healthcheck in compose. Qui si rinuncia, perché
+    # in Kubernetes le probe le esegue il kubelet dall'esterno e il problema
+    # non si pone: vedi le probe nel chart Helm.
+    #
+    # È un limite reale delle immagini distroless: vale la pena conoscerlo
+    # invece di scoprirlo in produzione.
+
+  quote-service:
+    build:
+      context: ./services/quote-service
+    image: vue-go/quote-service:0.1.0
+    environment:
+      - PORT=8080
+      # Il nome "catalog-service" viene risolto dalla rete di compose,
+      # esattamente come in Kubernetes lo risolve il Service.
+      - CATALOG_URL=http://catalog-service:8080
+    ports:
+      - "${QUOTE_PORT:-8080}:8080"
+    depends_on:
+      - catalog-service
+
+  quote-web:
+    build:
+      context: ./frontend/quote-web
+    image: vue-go/quote-web:0.1.0
+    ports:
+      - "${WEB_PORT:-3000}:8080"
+    depends_on:
+      - catalog-service
+      - quote-service
+
+# Una rete sola, creata da compose: tutti i servizi si vedono per nome.
+# Se servisse isolare (per esempio impedire al frontend di parlare
+# direttamente con il catalogo) si dichiarerebbero reti separate, come fa
+# lo scaffolding di Poste con `internal: true`.

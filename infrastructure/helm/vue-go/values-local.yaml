@@ -1,0 +1,42 @@
+# Valori per il cluster locale (kind, minikube o Docker Desktop).
+#
+# Uso:
+#   helm upgrade --install vue-go infrastructure/helm/vue-go \
+#     -f infrastructure/helm/vue-go/values-local.yaml
+#
+# Differenze rispetto ai default:
+#   - una replica sola: in locale non serve continuità e si risparmiano risorse
+#   - Gateway API disattivata, perché richiede che un controller (Envoy
+#     Gateway) sia già installato nel cluster. Senza, le risorse Gateway e
+#     HTTPRoute verrebbero create ma nessuno le realizzerebbe: si vedrebbero
+#     con kubectl e non funzionerebbero, che è il modo peggiore di fallire.
+#
+# Per raggiungere l'applicazione senza gateway basta un port-forward:
+#   kubectl -n vue-go port-forward svc/quote-web 8080:8080
+#   poi apri http://localhost:8080
+#
+# Se invece vuoi provare Gateway API sul serio, installa prima il controller:
+#   helm install eg oci://docker.io/envoyproxy/gateway-helm \
+#     --version v1.0.1 -n envoy-gateway-system --create-namespace
+# e poi rimetti gateway.enabled a true.
+
+gateway:
+  enabled: false
+
+defaults:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+services:
+  catalog-service:
+    replicas: 1
+  quote-service:
+    replicas: 1
+  quote-web:
+    replicas: 1

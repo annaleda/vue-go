@@ -1,0 +1,111 @@
+{{- range $name, $svc := .Values.services }}
+{{- $probePath := $svc.probePath | default "/health" }}
+{{- $resources := $svc.resources | default $.Values.defaults.resources }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Values.namespace.name }}
+  labels:
+    {{- include "vue-go.labels" (dict "name" $name "release" $.Release.Name "chart" (printf "%s-%s" $.Chart.Name $.Chart.Version)) | nindent 4 }}
+spec:
+  replicas: {{ $svc.replicas | default $.Values.defaults.replicas }}
+  selector:
+    matchLabels:
+      {{- include "vue-go.selectorLabels" (dict "name" $name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vue-go.selectorLabels" (dict "name" $name) | nindent 8 }}
+      annotations:
+        # Rilancia i pod quando cambia la configurazione: senza, un
+        # `helm upgrade` che tocca solo la ConfigMap non fa ripartire nulla
+        # e i pod continuano a girare con i valori vecchi.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
+    spec:
+      # Contesto di sicurezza a livello di pod.
+      # Le immagini girano già da utente non privilegiato (vedi i Dockerfile),
+      # ma dichiararlo qui lo rende verificabile dal cluster e impedisce che
+      # una modifica futura all'immagine reintroduca root di nascosto.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: {{ $name }}
+          image: {{ include "vue-go.image" (dict "repository" $.Values.image.repository "name" $name "tag" $.Values.image.tag) }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $svc.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ $name }}-config
+
+          {{/*
+            Le tre probe fanno cose diverse e vanno capite bene, perché
+            configurarle male è una delle cause più comuni di guai:
+
+              startup   -> "è ancora in fase di avvio?" Finché fallisce, le
+                           altre due sono sospese. Serve alle applicazioni
+                           lente a partire: senza, la liveness le ucciderebbe
+                           prima che finiscano di avviarsi.
+              readiness -> "posso mandargli traffico?" Se fallisce, il pod
+                           viene tolto dal Service ma NON riavviato.
+              liveness  -> "è ancora sano?" Se fallisce, il pod viene UCCISO
+                           e ricreato.
+
+            Regola pratica: la liveness deve controllare solo che il processo
+            sia vivo, mai le dipendenze esterne. Se controllasse il database,
+            un database lento farebbe riavviare in massa tutti i pod —
+            peggiorando esattamente la situazione che si voleva salvare.
+            Le dipendenze vanno nella readiness (vedi quote-service, che in
+            readiness verifica il catalogo).
+          */}}
+          startupProbe:
+            httpGet:
+              path: {{ $probePath }}/liveness
+              port: http
+            periodSeconds: 2
+            failureThreshold: 15
+
+          readinessProbe:
+            httpGet:
+              path: {{ $probePath }}/readiness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: {{ $probePath }}/liveness
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          {{/*
+            requests = quanto lo scheduler riserva per decidere dove metterlo
+            limits   = il tetto oltre il quale interviene
+
+            Superare il limite di CPU rallenta il container (throttling),
+            superare quello di memoria lo fa uccidere di colpo (OOMKilled).
+            Sono due comportamenti molto diversi: la memoria non si comprime.
+          */}}
+          resources:
+            {{- toYaml $resources | nindent 12 }}
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ if eq $name "quote-web" }}false{{ else }}true{{ end }}
+            capabilities:
+              drop: ["ALL"]
+
+          {{- if eq $name "quote-web" }}
+          # nginx ha bisogno di scrivere cache e file temporanei, quindi non
+          # può avere il filesystem in sola lettura. I due servizi Go invece
+          # sì: non scrivono nulla su disco.
+          {{- end }}
+{{- end }}

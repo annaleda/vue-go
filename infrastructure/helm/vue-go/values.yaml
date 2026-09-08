@@ -1,0 +1,109 @@
+# Valori di default del chart.
+#
+# La struttura è quella tipica di un chart che distribuisce più componenti:
+# una mappa `services`, e i template ci iterano sopra con `range`. Aggiungere
+# un servizio significa aggiungere una voce qui, non un file in templates/.
+
+namespace:
+  # Il chart crea il namespace. In molte organizzazioni lo crea invece la
+  # piattaforma e questo va messo a false: un chart applicativo di solito
+  # non ha (e non dovrebbe avere) i permessi per creare namespace.
+  create: true
+  name: vue-go
+
+image:
+  # Vuoto o nome semplice = immagini già presenti sul nodo, che è il caso
+  # di `kind load docker-image` o del cluster di Docker Desktop.
+  # Con un registry vero: registry.example.com/vue-go
+  repository: vue-go
+  tag: "0.1.0"
+  # IfNotPresent è obbligatorio quando le immagini sono caricate sul nodo:
+  # con Always Kubernetes proverebbe a scaricarle da un registry e fallirebbe.
+  pullPolicy: IfNotPresent
+
+# Gateway API (Envoy Gateway).
+#
+# Sostituisce Ingress: separa i ruoli fra chi gestisce l'infrastruttura
+# (Gateway) e chi gestisce l'applicazione (HTTPRoute). Il *controller* non
+# fa parte di questo chart — è infrastruttura di cluster, si installa a parte.
+gateway:
+  enabled: true
+  name: vue-go-gateway
+  className: envoy-gateway
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  port: 80
+  # Vuoto = accetta qualunque Host. In produzione va messo il dominio vero.
+  hostname: ""
+
+# Valori applicati a tutti i servizi se non sovrascritti dal singolo.
+defaults:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 300m
+      memory: 128Mi
+
+# I tre componenti dell'applicazione.
+#
+# Nota le richieste di risorse molto basse per i due servizi Go: un binario
+# statico che non fa quasi nulla consuma pochi megabyte. Un servizio Java
+# equivalente partirebbe da 256-512Mi solo per la JVM. È il motivo per cui
+# Go è così usato per i servizi di infrastruttura.
+services:
+  catalog-service:
+    port: 8080
+    replicas: 2
+    # Il catalogo è in memoria e non dipende da nessuno: può partire subito.
+    probePath: /health
+    env:
+      LOG_LEVEL: info
+
+  quote-service:
+    port: 8080
+    replicas: 2
+    probePath: /health
+    env:
+      # Il nome DNS di un Service in Kubernetes è il nome del Service.
+      # Da un altro namespace servirebbe la forma completa:
+      # catalog-service.vue-go.svc.cluster.local
+      CATALOG_URL: http://catalog-service:8080
+      LOG_LEVEL: info
+
+  quote-web:
+    port: 8080
+    replicas: 2
+    probePath: /health
+    # Il frontend è statico: una sola replica basterebbe, ma due danno
+    # continuità durante gli aggiornamenti.
+    resources:
+      requests:
+        cpu: 20m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 64Mi
+
+# Instradamento del traffico in ingresso.
+#
+# L'ordine conta: le regole più specifiche vanno prima, perché il match
+# sui path con prefisso è ingordo. `/` cattura tutto e va per ultimo.
+routes:
+  - path: /api/garanzie
+    service: catalog-service
+    port: 8080
+    # Riscrittura: il gateway riceve /api/garanzie e il servizio si aspetta
+    # /api/v1/garanzie. Tenere il percorso pubblico stabile mentre quello
+    # interno evolve è uno dei motivi per cui si mette un gateway davanti.
+    rewrite: /api/v1/garanzie
+
+  - path: /api/preventivi
+    service: quote-service
+    port: 8080
+    rewrite: /api/v1/preventivi
+
+  - path: /
+    service: quote-web
+    port: 8080

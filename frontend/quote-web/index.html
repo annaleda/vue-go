@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Preventivo auto</title>
+  </head>
+  <body>
+    <!--
+      Questo div vuoto è tutto ciò che il browser riceve all'inizio.
+      Vue lo "monta" e ci costruisce dentro l'interfaccia (vedi src/main.js).
+
+      È il modello classico della single page application: il server manda
+      un guscio vuoto, il JavaScript fa il resto. L'alternativa è il
+      rendering lato server, che nei micro-frontend Poste è fatto da
+      Hypernova: lì il server restituisce già l'HTML pronto e il browser
+      lo "idrata", cioè gli riattacca il comportamento.
+    -->
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

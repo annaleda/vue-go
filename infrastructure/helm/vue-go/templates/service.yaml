@@ -1,0 +1,33 @@
+{{/*
+  Un Service per ogni componente.
+
+  Il Service è due cose insieme:
+    - un nome DNS stabile (catalog-service) che non cambia mai, anche se i
+      pod dietro nascono e muoiono con IP sempre diversi
+    - un bilanciatore che distribuisce le richieste sui pod pronti
+
+  "Pronti" è la parola chiave: un pod la cui readiness fallisce viene tolto
+  dagli endpoint del Service e smette di ricevere traffico, pur restando vivo.
+
+  Il tipo è ClusterIP: raggiungibile solo dall'interno del cluster.
+  Il traffico da fuori entra dal Gateway, che è l'unico punto esposto.
+*/}}
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Values.namespace.name }}
+  labels:
+    {{- include "vue-go.labels" (dict "name" $name "release" $.Release.Name "chart" (printf "%s-%s" $.Chart.Name $.Chart.Version)) | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "vue-go.selectorLabels" (dict "name" $name) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $svc.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

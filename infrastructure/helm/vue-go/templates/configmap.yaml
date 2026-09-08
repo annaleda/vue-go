@@ -1,0 +1,33 @@
+{{/*
+  Una ConfigMap per servizio, con le variabili d'ambiente.
+
+  Perché una ConfigMap invece di scrivere le env direttamente nel Deployment:
+  la configurazione si può cambiare senza toccare il Deployment, e si vede
+  con `kubectl get configmap ... -o yaml` senza leggere il pod.
+
+  Attenzione però: modificare una ConfigMap NON riavvia i pod da sola. Per
+  questo il Deployment porta un'annotazione con il checksum di questo file
+  (vedi deployment.yaml) — è il trucco che rende l'upgrade effettivo.
+
+  Qui non c'è nessun Secret perché non ci sono credenziali: i due servizi Go
+  non parlano con database né con sistemi autenticati. Se servissero,
+  andrebbero in un Secret, e in produzione da un gestore esterno
+  (External Secrets, Vault) — mai committati nel repository.
+*/}}
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-config
+  namespace: {{ $.Values.namespace.name }}
+  labels:
+    {{- include "vue-go.labels" (dict "name" $name "release" $.Release.Name "chart" (printf "%s-%s" $.Chart.Name $.Chart.Version)) | nindent 4 }}
+data:
+  # La porta arriva sempre dalla configurazione del servizio: così il
+  # container, il Service e la probe non possono andare fuori sincrono.
+  PORT: {{ $svc.port | quote }}
+  {{- range $key, $value := $svc.env }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+{{- end }}
