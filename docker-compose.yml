@@ -79,6 +79,63 @@ services:
       - catalog-service
       - quote-service
 
+  # ---------------------------------------------------------------------
+  # Micro-frontend: la stessa applicazione, composta invece che monolitica.
+  #
+  # quote-web (sopra) e' una SPA sola che fa tutto.
+  # Qui sotto la stessa cosa e' spezzata in due step indipendenti, ognuno
+  # un servizio a se', ricomposti a runtime dall'aggregator.
+  #
+  # Girano insieme e in parallelo: sono due modi diversi di fare la stessa
+  # cosa, ed e' istruttivo confrontarli aperti nello stesso momento.
+  # ---------------------------------------------------------------------
+
+  dati-step-fe:
+    build:
+      context: ./frontend/steps/dati-step-fe
+    image: vue-go/dati-step-fe:0.1.0
+    environment:
+      - PORT=3031
+      - STEP_ID=dati
+      - ID_VIEW_WEB=dati-step_web
+      - ID_VIEW_MOBILE=dati-step_mobile
+    ports:
+      - "${DATI_STEP_PORT:-3031}:3031"
+
+  garanzie-step-fe:
+    build:
+      context: ./frontend/steps/garanzie-step-fe
+    image: vue-go/garanzie-step-fe:0.1.0
+    environment:
+      - PORT=3032
+      - STEP_ID=garanzie
+      - ID_VIEW_WEB=garanzie-step_web
+      - ID_VIEW_MOBILE=garanzie-step_mobile
+    ports:
+      - "${GARANZIE_STEP_PORT:-3032}:3032"
+
+  aggregator:
+    build:
+      context: ./frontend/aggregator
+    image: vue-go/aggregator:0.1.0
+    environment:
+      - PORT=8080
+      # Gli step sono raggiunti dal SERVER per nome di servizio: e' Nuxt a
+      # chiamarli in asyncData, non il browser.
+      - DATI_STEP_URL=http://dati-step-fe:3031
+      - GARANZIE_STEP_URL=http://garanzie-step-fe:3032
+      # I servizi Go invece sono raggiunti dal BROWSER, passando dal proxy
+      # dell'aggregator: percorso /api/... riscritto verso questi target.
+      - CATALOG_URL=http://catalog-service:8080
+      - QUOTE_URL=http://quote-service:8080
+    ports:
+      - "${AGGREGATOR_PORT:-3001}:8080"
+    depends_on:
+      - dati-step-fe
+      - garanzie-step-fe
+      - catalog-service
+      - quote-service
+
 # Una rete sola, creata da compose: tutti i servizi si vedono per nome.
 # Se servisse isolare (per esempio impedire al frontend di parlare
 # direttamente con il catalogo) si dichiarerebbero reti separate, come fa

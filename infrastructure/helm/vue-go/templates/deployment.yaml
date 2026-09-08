@@ -1,6 +1,8 @@
 {{- range $name, $svc := .Values.services }}
 {{- $probePath := $svc.probePath | default "/health" }}
 {{- $resources := $svc.resources | default $.Values.defaults.resources }}
+{{- $startupFailures := $svc.startupFailureThreshold | default 15 }}
+{{- $readOnlyFs := $svc.readOnlyRootFilesystem | default false }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -68,7 +70,7 @@ spec:
               path: {{ $probePath }}/liveness
               port: http
             periodSeconds: 2
-            failureThreshold: 15
+            failureThreshold: {{ $startupFailures }}
 
           readinessProbe:
             httpGet:
@@ -97,15 +99,16 @@ spec:
           resources:
             {{- toYaml $resources | nindent 12 }}
 
+          {{/*
+            readOnlyRootFilesystem impedisce al container di scrivere sul
+            proprio filesystem. È una difesa efficace — molti attacchi hanno
+            bisogno di depositare qualcosa — ma non tutti i processi la
+            sopportano: nginx scrive cache, Node scrive file temporanei.
+            Per questo è una scelta per servizio, non una regola globale.
+          */}}
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: {{ if eq $name "quote-web" }}false{{ else }}true{{ end }}
+            readOnlyRootFilesystem: {{ $readOnlyFs }}
             capabilities:
               drop: ["ALL"]
-
-          {{- if eq $name "quote-web" }}
-          # nginx ha bisogno di scrivere cache e file temporanei, quindi non
-          # può avere il filesystem in sola lettura. I due servizi Go invece
-          # sì: non scrivono nulla su disco.
-          {{- end }}
 {{- end }}

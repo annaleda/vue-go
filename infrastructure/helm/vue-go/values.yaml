@@ -58,6 +58,9 @@ services:
     replicas: 2
     # Il catalogo è in memoria e non dipende da nessuno: può partire subito.
     probePath: /health
+    # Un binario Go statico non scrive nulla su disco: si può bloccare
+    # completamente la scrittura sul filesystem del container.
+    readOnlyRootFilesystem: true
     env:
       LOG_LEVEL: info
 
@@ -65,6 +68,7 @@ services:
     port: 8080
     replicas: 2
     probePath: /health
+    readOnlyRootFilesystem: true
     env:
       # Il nome DNS di un Service in Kubernetes è il nome del Service.
       # Da un altro namespace servirebbe la forma completa:
@@ -76,6 +80,9 @@ services:
     port: 8080
     replicas: 2
     probePath: /health
+    # nginx scrive cache e file temporanei: non può avere il filesystem
+    # in sola lettura. I servizi Go invece sì, non scrivono nulla su disco.
+    readOnlyRootFilesystem: false
     # Il frontend è statico: una sola replica basterebbe, ma due danno
     # continuità durante gli aggiornamenti.
     resources:
@@ -85,6 +92,59 @@ services:
       limits:
         cpu: 200m
         memory: 64Mi
+
+  # --- Micro-frontend: la variante composta della stessa applicazione ---
+  #
+  # Nota le risorse molto più alte dei servizi Go: questi sono processi
+  # Node che fanno rendering server-side a ogni richiesta. È il costo reale
+  # dell'architettura a micro-frontend, e vale la pena vederlo scritto.
+
+  dati-step-fe:
+    port: 3031
+    replicas: 1
+    probePath: /health
+    readOnlyRootFilesystem: false
+    # Hypernova gira in cluster mode: fa il fork di più worker e impiega
+    # ~20 secondi a mettersi in ascolto. Da qui la startupProbe generosa.
+    startupFailureThreshold: 30
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: 500m, memory: 512Mi }
+    env:
+      STEP_ID: dati
+      ID_VIEW_WEB: dati-step_web
+      ID_VIEW_MOBILE: dati-step_mobile
+
+  garanzie-step-fe:
+    port: 3032
+    replicas: 1
+    probePath: /health
+    readOnlyRootFilesystem: false
+    startupFailureThreshold: 30
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: 500m, memory: 512Mi }
+    env:
+      STEP_ID: garanzie
+      ID_VIEW_WEB: garanzie-step_web
+      ID_VIEW_MOBILE: garanzie-step_mobile
+
+  aggregator:
+    port: 8080
+    replicas: 1
+    probePath: /health
+    readOnlyRootFilesystem: false
+    startupFailureThreshold: 30
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: 500m, memory: 512Mi }
+    env:
+      # Gli step li chiama il SERVER Nuxt, per nome di Service.
+      DATI_STEP_URL: http://dati-step-fe:3031
+      GARANZIE_STEP_URL: http://garanzie-step-fe:3032
+      # I servizi Go li chiama il BROWSER, passando dal proxy dell'aggregator.
+      CATALOG_URL: http://catalog-service:8080
+      QUOTE_URL: http://quote-service:8080
 
 # Instradamento del traffico in ingresso.
 #
@@ -104,6 +164,27 @@ routes:
     port: 8080
     rewrite: /api/v1/preventivi
 
+  # L'aggregator dei micro-frontend risponde su /funnel.
+  # Le due varianti dell'applicazione convivono dietro lo stesso gateway:
+  #   /         la SPA monolitica
+  #   /funnel   la stessa cosa composta da micro-frontend
+  - path: /funnel
+    service: aggregator
+    port: 8080
+    rewrite: /
+
+  # I bundle di hydration: il browser li chiede all'aggregator, che nel
+  # compose li proxa. Su Kubernetes conviene invece mandarli direttamente
+  # allo step che li produce — un salto in meno.
+  - path: /dati
+    service: dati-step-fe
+    port: 3031
+
+  - path: /garanzie
+    service: garanzie-step-fe
+    port: 3032
+
+  # Regola catch-all: va SEMPRE per ultima, altrimenti cattura tutto.
   - path: /
     service: quote-web
     port: 8080

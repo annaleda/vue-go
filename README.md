@@ -1,7 +1,8 @@
 # vue-go
 
-Preventivatore auto a microservizi: due servizi **Go**, un frontend **Vue 3**,
-distribuiti su **Kubernetes** con **Helm** e Gateway API.
+Preventivatore auto a microservizi: due servizi **Go**, due varianti di
+frontend (**SPA Vue 3** e **micro-frontend Vue 2 + Hypernova** composti da un
+aggregator **Nuxt**), distribuiti su **Kubernetes** con **Helm** e Gateway API.
 
 È un progetto didattico. Il dominio (calcolo di un premio RCA) è abbastanza
 piccolo da stare in testa e abbastanza reale da non essere finto: coefficienti
@@ -14,33 +15,56 @@ per età, classe di merito, provincia e anzianità di patente.
 ```
 vue-go/
 ├── services/
-│   ├── catalog-service/     Go — espone il catalogo delle garanzie
-│   └── quote-service/       Go — calcola il preventivo, chiama il catalogo
+│   ├── catalog-service/       Go — espone il catalogo delle garanzie
+│   └── quote-service/         Go — calcola il preventivo, chiama il catalogo
 ├── frontend/
-│   └── quote-web/           Vue 3 + Vite, servito da nginx
+│   ├── quote-web/             Vue 3 + Vite — la variante SPA
+│   ├── steps/
+│   │   ├── dati-step-fe/      Vue 2 + Hypernova — micro-frontend
+│   │   └── garanzie-step-fe/  Vue 2 + Hypernova — micro-frontend
+│   └── aggregator/            Nuxt 2 — compone gli step
 ├── infrastructure/
-│   └── helm/vue-go/         chart Helm: Deployment, Service, Gateway, HTTPRoute
-├── documentation/           spiegazioni, un file per argomento
-└── docker-compose.yml       lo stesso stack senza Kubernetes
+│   └── helm/vue-go/           chart Helm: Deployment, Service, Gateway, HTTPRoute
+├── documentation/             spiegazioni, un file per argomento
+└── docker-compose.yml         lo stesso stack senza Kubernetes
 ```
+
+### Due architetture a confronto
+
+Il progetto contiene **la stessa applicazione fatta in due modi**, e girano
+insieme così puoi tenerle aperte affiancate:
+
+| | Cos'è | Dove |
+|---|---|---|
+| **SPA** | Una sola app Vue 3 che fa tutto, servita da nginx | porta 3000 |
+| **Micro-frontend** | Due step indipendenti in Vue 2 + Hypernova, renderizzati lato server e ricomposti a runtime da un aggregator Nuxt | porta 3001 |
+
+La seconda è l'architettura del canale digitale di Poste. Il confronto fra le
+due — cosa si guadagna e cosa costa — è in [05 — Micro-frontend](documentation/05-microfrontend.md).
 
 ### Il flusso
 
 ```
-browser
-   │
-   ▼
-quote-web (nginx + Vue)
-   │  /api/garanzie  ──────────────►  catalog-service
-   │  /api/preventivi ─────────────►  quote-service
-                                          │
-                                          └──►  catalog-service
+                    SPA                          MICRO-FRONTEND
+                                                                       
+browser                                 browser
+   │                                       │
+   ▼                                       ▼
+quote-web (nginx + Vue 3)              aggregator (Nuxt)
+   │                                       │  POST /batch
+   │                                       ├──► dati-step-fe      (Hypernova)
+   │                                       └──► garanzie-step-fe  (Hypernova)
+   │                                                    │
+   ├── /api/garanzie   ──────────────────────────────►  catalog-service
+   └── /api/preventivi ──────────────────────────────►  quote-service
+                                                             │
+                                                             └──► catalog-service
 ```
 
-`quote-service` non ha il catalogo: se lo fa dare da `catalog-service` e lo
-tiene in cache per un minuto. È la parte interessante — due servizi che si
-parlano, con tutto quello che ne consegue: timeout, errori a valle, cache,
-e una readiness che dipende da qualcun altro.
+`quote-service` non ha il catalogo: se lo fa dare da `catalog-service`. È la
+parte interessante lato backend — due servizi che si parlano, con tutto quello
+che ne consegue: timeout, errori a valle, cache, e una readiness che dipende
+da qualcun altro.
 
 ---
 
@@ -52,18 +76,23 @@ e una readiness che dipende da qualcun altro.
 docker compose up -d --build
 ```
 
-Poi apri **http://localhost:3000**
+Poi apri **http://localhost:3001** (i micro-frontend composti)
 
 | Cosa | Indirizzo |
 |---|---|
-| Frontend | http://localhost:3000 |
+| **Micro-frontend composti** | **http://localhost:3001** |
+| SPA monolitica (confronto) | http://localhost:3000 |
+| Step "dati" da solo | http://localhost:3031 |
+| Step "garanzie" da solo | http://localhost:3032 |
 | quote-service | http://localhost:8080/api/v1/preventivi |
 | catalog-service | http://localhost:8081/api/v1/garanzie |
 
 Se quelle porte sono occupate:
 
 ```bash
-WEB_PORT=13000 QUOTE_PORT=18080 CATALOG_PORT=18081 docker compose up -d
+WEB_PORT=13000 QUOTE_PORT=18080 CATALOG_PORT=18081 \
+AGGREGATOR_PORT=13001 DATI_STEP_PORT=13031 GARANZIE_STEP_PORT=13032 \
+docker compose up -d
 ```
 
 Una prova rapida da riga di comando:
@@ -96,9 +125,10 @@ docker compose build
 
 # 2. rendile visibili al cluster
 #    (con kind; con Docker Desktop questo passo non serve)
-kind load docker-image vue-go/catalog-service:0.1.0
-kind load docker-image vue-go/quote-service:0.1.0
-kind load docker-image vue-go/quote-web:0.1.0
+for i in catalog-service quote-service quote-web \
+         dati-step-fe garanzie-step-fe aggregator; do
+  kind load docker-image vue-go/$i:0.1.0
+done
 
 # 3. installa il chart
 helm upgrade --install vue-go infrastructure/helm/vue-go \
@@ -169,6 +199,7 @@ i punti dove è facile sbagliare.
 | [02 — Vue](documentation/02-vue.md) | Reattività, componenti, props ed eventi, le due sintassi a confronto |
 | [03 — Docker](documentation/03-docker.md) | Multi-stage build, perché le immagini Go pesano 7 MB |
 | [04 — Kubernetes e Helm](documentation/04-kubernetes-e-helm.md) | Deployment, Service, le tre probe, il chart, Gateway API |
+| [05 — Micro-frontend](documentation/05-microfrontend.md) | Hypernova, SSR componibile, l'EventBus condiviso e il suo tranello, il costo reale |
 
 ---
 
@@ -183,3 +214,9 @@ i punti dove è facile sbagliare.
 - Il modello `Garanzia` è **duplicato** nei due servizi. È un problema vero
   delle architetture a microservizi, ed è commentato nel codice
   (`services/quote-service/catalog_client.go`) invece di essere nascosto.
+- I micro-frontend usano **Vue 2**, non Vue 3: `hypernova-vue` non è mai stato
+  portato a Vue 3. Vue 2 è fuori supporto da dicembre 2023 — ma è esattamente
+  ciò che gira in Poste, ed è il motivo per cui la SPA (Vue 3) e gli step
+  (Vue 2) convivono in questo repository.
+- Gli step Hypernova impiegano **~20 secondi** ad avviarsi: il framework fa il
+  fork di più worker. Da qui la `startupProbe` più generosa nel chart Helm.
