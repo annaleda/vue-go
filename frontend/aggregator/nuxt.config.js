@@ -30,6 +30,19 @@ export default {
 
   components: true,
 
+  // L'applicazione non vive sulla radice ma sotto /funnel, perche' dietro
+  // c'e' un gateway che sulla radice serve la variante SPA.
+  //
+  // Senza router.base, Nuxt genererebbe gli URL degli asset a partire da /
+  // (es. /_nuxt/app.js) e il gateway li manderebbe alla SPA: pagina bianca,
+  // 404 sui bundle, nessun errore evidente sul perche'.
+  //
+  // E' il problema classico del deploy sotto sotto-percorso. In Angular si
+  // risolve con --base-href, in Vite con `base`, qui con router.base.
+  router: {
+    base: process.env.ROUTER_BASE || '/',
+  },
+
   // Le probe di Kubernetes hanno bisogno di un endpoint che non renderizzi
   // una pagina intera: serverMiddleware risponde prima di arrivare a Nuxt.
   serverMiddleware: [
